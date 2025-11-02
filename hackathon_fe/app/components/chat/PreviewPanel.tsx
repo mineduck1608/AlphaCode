@@ -291,11 +291,11 @@ export default function PreviewPanel({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <ChangesSummary
+        {/* <ChangesSummary
           summary={data.summary}
           issues={data.issues}
           message={data.message}
-        />
+        /> */}
 
         {/* Prioritized Requirements */}
         {data.prioritizedRequirements && data.prioritizedRequirements.length > 0 && (

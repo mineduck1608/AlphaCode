@@ -19,18 +19,19 @@ export default function ChatMessageList({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    console.log('💬 ChatMessageList render:', { isLoading, isAgentTyping, messageCount: messages.length });
     containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, isLoading, isAgentTyping]);
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0f1419]">
+    <div ref={containerRef} className="flex-1 overflow-y-auto p-6 space-y-6 bg-background">
       {messages.map((msg) => (
         <div key={msg.id} className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
           {/* Avatar */}
           <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ${
             msg.role === "user" 
-              ? "bg-gradient-to-br from-blue-600 to-blue-500" 
-              : "bg-gradient-to-br from-purple-600 to-blue-600 border-2 border-blue-500/30"
+              ? "bg-linear-to-br from-blue-600 to-blue-500" 
+              : "bg-linear-to-br from-purple-600 to-blue-600 border-2 border-blue-500/30"
           }`}>
             {msg.role === "user" ? (
               <User className="w-5 h-5 text-white" />
@@ -43,7 +44,7 @@ export default function ChatMessageList({
           <div className={`flex-1 max-w-[75%] ${msg.role === "user" ? "text-right" : "text-left"}`}>
             <div className={`inline-block whitespace-pre-wrap rounded-2xl px-5 py-3 text-sm shadow-lg ${
               msg.role === "user" 
-                ? "bg-gradient-to-r from-blue-600 to-blue-500 text-white" 
+                ? "bg-linear-to-r from-blue-600 to-blue-500 text-white" 
                 : "bg-[#1a1f2e] text-gray-100 border border-blue-900/30"
             }`}>
               {msg.content || (msg.role === "assistant" ? "…" : "")}

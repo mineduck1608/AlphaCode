@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -15,21 +16,21 @@ class UserRepository:
     # READ (One)
     async def get_user(self, db: AsyncSession, user_id: int) -> Optional[User]:
         result = await db.execute(
-            select(User).where(User.id == user_id)
+            select(User).where(User.id == user_id, User.status == 1)
         )
         return result.scalar_one_or_none()
     
     # READ (By Email - Thêm vào để tiện cho xác thực)
     async def get_user_by_email(self, db: AsyncSession, email: str) -> Optional[User]:
         result = await db.execute(
-            select(User).where(User.email == email)
+            select(User).where(User.email == email, User.status == 1)
         )
         return result.scalar_one_or_none()
 
     # READ (All)
     async def list_users(self, db: AsyncSession, skip: int = 0, limit: int = 100) -> List[User]:
         result = await db.execute(
-            select(User).offset(skip).limit(limit)
+            select(User).where(User.status == 1).offset(skip).limit(limit)
         )
         return result.scalars().all()
 
@@ -40,7 +41,9 @@ class UserRepository:
         await db.refresh(user)
         return user
 
-    # DELETE
+    # DELETE (Soft delete)
     async def delete_user(self, db: AsyncSession, user: User) -> None:
-        await db.delete(user)
+        user.status = 0
+        user.last_updated = datetime.utcnow()
+        db.add(user)
         await db.commit()

@@ -9,8 +9,11 @@ import PreviewPanel from "./PreviewPanel";
 import { analyzeStories, runPipeline } from '@/app/api/mcpApi';
 import { useWebSocket } from "@/app/lib/hooks/useWebSocket";
 import { getCurrentUserId, logout, getCurrentUserEmail } from "@/app/lib/authMock";
-import { getWebSocketUrl, STORAGE_KEYS, UI_CONFIG } from "@/app/lib/constants";
+import { getWebSocketUrl, UI_CONFIG } from "@/app/lib/constants";
 import { PanelRightOpen, PanelRightClose } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { messageApi } from "@/app/api/messageApi";
+import type { Message as APIMessage } from "@/app/types/message";
 
 export type Message = {
   id: string;
@@ -19,18 +22,13 @@ export type Message = {
   time?: string;
 };
 
-const STORAGE_KEY = STORAGE_KEYS.CHAT_HISTORY;
-
 export default function ChatLayout() {
-  const [messages, setMessages] = useState<Message[]>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [{ id: "m0", role: "assistant", content: UI_CONFIG.DEFAULT_GREETING, time: new Date().toLocaleTimeString() }];
-      return JSON.parse(raw) as Message[];
-    } catch {
-      return [{ id: "m0", role: "assistant", content: UI_CONFIG.DEFAULT_GREETING, time: new Date().toLocaleTimeString() }];
-    }
-  });
+  const searchParams = useSearchParams();
+  const conversationIdFromUrl = searchParams.get('id');
+  
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(conversationIdFromUrl);
+  const [messages, setMessages] = useState<Message[]>([]);
+
   const [isLoading, setIsLoading] = useState(false);
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -39,48 +37,81 @@ export default function ChatLayout() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const userEmail = getCurrentUserEmail();
 
-  // WebSocket connection to backend
+  // WebSocket connection
   const websocket = useWebSocket({
     url: getWebSocketUrl(),
     autoConnect: true,
+
     onMessage: (wsMessage) => {
-      console.log('📨 Received WebSocket message:', wsMessage);
-      
-      // Handle typing indicator
-      if (wsMessage.type === 'typing') {
-        setIsAgentTyping(wsMessage.metadata?.isTyping || false);
-        setIsLoading(false); // Stop loading when agent starts typing
+      console.log("📨 Received WebSocket message:", wsMessage);
+
+      // --- Handle typing indicator ---
+      if (wsMessage.type === "typing") {
+        let actualMetadata = wsMessage.metadata || {};
+        if (typeof wsMessage.content === "string" && wsMessage.content.trim().startsWith("{")) {
+          try {
+            const parsed = JSON.parse(wsMessage.content);
+            actualMetadata = parsed.metadata || actualMetadata;
+          } catch (e) {
+            console.warn("⚠️ Failed to parse typing content:", e);
+          }
+        }
+
+        const isTyping = actualMetadata.is_typing === true || actualMetadata.isTyping === true;
+        console.log("⌨️ Typing indicator:", isTyping);
+        setIsAgentTyping(isTyping);
+        if (isTyping) setIsLoading(false);
         return;
       }
-      
-      // Handle system messages (welcome, etc.)
-      if (wsMessage.type === 'system') {
+
+      // --- System message ---
+      if (wsMessage.type === "system") {
         const botMsg: Message = {
-          id: 'ws' + Date.now(),
-          role: 'assistant',
+          id: "ws-" + Date.now(),
+          role: "assistant",
           content: `[System] ${wsMessage.content}`,
           time: new Date().toLocaleTimeString(),
         };
         setMessages((prev) => [...prev, botMsg]);
-      } else if (wsMessage.type === 'text') {
-        // Regular text response from agent
-        setIsAgentTyping(false); // Stop typing indicator
-        
+        return;
+      }
+
+      // --- Regular message ---
+      if (wsMessage.type === "text") {
+        setIsAgentTyping(false);
+        const contentStr = String(wsMessage.content || "");
+
+        const looksLikeMarkdown =
+          /```|^#{1,6}\s|^\s*[-*]\s|\n#{1,6}\s|\*\*|\n\n/m.test(contentStr) ||
+          contentStr.length > 300;
+
+        if (looksLikeMarkdown) {
+          setPreviewData({
+            summary: { added: 0, modified: 0, deleted: 0, totalLines: { added: 0, deleted: 0 } },
+            files: [],
+            report: contentStr,
+            message: "AI response preview",
+          });
+          setShowPreview(true);
+        }
+
         const botMsg: Message = {
-          id: 'ws' + Date.now(),
-          role: 'assistant',
-          content: wsMessage.content,
+          id: "ws-" + Date.now(),
+          role: "assistant",
+          content: contentStr,
           time: new Date().toLocaleTimeString(),
         };
         setMessages((prev) => [...prev, botMsg]);
         setIsLoading(false);
-      } else if (wsMessage.type === 'error') {
-        // Handle error messages
+        return;
+      }
+
+      // --- Error message ---
+      if (wsMessage.type === "error") {
         setIsAgentTyping(false);
-        
         const errorMsg: Message = {
-          id: 'ws' + Date.now(),
-          role: 'assistant',
+          id: "ws-" + Date.now(),
+          role: "assistant",
           content: `⚠️ Error: ${wsMessage.content}`,
           time: new Date().toLocaleTimeString(),
         };
@@ -88,175 +119,190 @@ export default function ChatLayout() {
         setIsLoading(false);
       }
     },
-    onOpen: () => {
-      console.log('✅ Connected to AI Agent');
-    },
-    onClose: () => {
-      console.log('❌ Disconnected from AI Agent');
-    },
+
+    onOpen: () => console.log("✅ Connected to AI Agent"),
+    onClose: () => console.log("❌ Disconnected from AI Agent"),
   });
 
+  // Sync conversation ID từ URL
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    // auto scroll
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+    if (conversationIdFromUrl && conversationIdFromUrl !== currentConversationId) {
+      setCurrentConversationId(conversationIdFromUrl);
+    }
+  }, [conversationIdFromUrl, currentConversationId]);
 
-  // handle sending: if message contains "Story:" -> pipeline, else -> WebSocket chat
-  const handleSend = async (text: string) => {
-    if (!text.trim()) return;
-    
-    // Add user message to UI
-    const id = Date.now().toString();
-    const userMsg: Message = { 
-      id, 
-      role: "user", 
-      content: text, 
-      time: new Date().toLocaleTimeString() 
-    };
-    setMessages((s) => [...s, userMsg]);
-    setIsLoading(true);
-
-    // Check if message is requirements analysis (contains "Story:" or command)
-    const isRequirementsAnalysis = text.toLowerCase().includes('story:') || 
-                                   text.toLowerCase().startsWith('/analyze') ||
-                                   text.toLowerCase().startsWith('/pipeline');
-    
-    if (isRequirementsAnalysis) {
-      // Route to pipeline for requirements analysis
-      try {
-        // Use raw_text instead of stories to let collector extract multiple stories from input
-        // Collector will automatically detect and split on "Story:" markers
-        const resp = await runPipeline({ raw_text: text });
-        const payload = resp || {};
-
-      // Extract data from pipeline response
-      // Handle nested analysis structure: analysis.analysis.summary or analysis.summary
-      const analysisRaw = payload.analysis || {};
-      const analysis = analysisRaw.analysis || analysisRaw; // Support both nested and flat structure
-      const report = payload.report || {};
-      const requirements = payload.requirements || [];
-      const prioritized = payload.prioritized || {};
-      const prioritizedRequirements = prioritized.requirements || requirements;
-
-      // Build chat message: show analysis summary and report preview
-      const parts: string[] = [];
+  // Load messages khi conversation ID thay đổi
+  useEffect(() => {
+    const loadMessages = async () => {
+      if (!currentConversationId) {
+        // Không có conversation, hiển thị welcome message
+        setMessages([{ 
+          id: "welcome", 
+          role: "assistant", 
+          content: UI_CONFIG.DEFAULT_GREETING, 
+          time: new Date().toLocaleTimeString() 
+        }]);
+        return;
+      }
       
-      // Analysis summary
-      if (analysis.summary) {
-        const summary = analysis.summary;
-        if (summary.total_stories) {
-          parts.push(`📊 Phân tích hoàn tất: ${summary.total_stories} user story được xử lý`);
-          if (summary.stories_with_issues > 0) {
-            parts.push(`⚠️ ${summary.stories_with_issues} story có vấn đề (${summary.total_issues} vấn đề tổng cộng)`);
-          } else {
-            parts.push(`✅ Không phát hiện vấn đề`);
-          }
-        }
-      }
-
-      // Issues summary - check both analysis.issues and analysisRaw.issues
-      const issues = Array.isArray(analysis.issues) ? analysis.issues : 
-                     Array.isArray(analysisRaw.issues) ? analysisRaw.issues : [];
-      if (issues.length > 0) {
-        const criticalIssues = issues.filter((i: any) => i.type === 'conflict' || i.severity === 'high').length;
-        if (criticalIssues > 0) {
-          parts.push(`🔴 ${criticalIssues} vấn đề nghiêm trọng cần xử lý`);
-        }
-        parts.push(`📋 Tổng cộng ${issues.length} vấn đề đã được phát hiện. Xem chi tiết trong Preview Panel.`);
-      }
-
-      // Requirements summary
-      if (prioritizedRequirements.length > 0) {
-        const reqCount = prioritizedRequirements.length;
-        parts.push(`📝 ${reqCount} requirement${reqCount > 1 ? 's' : ''} đã được xác định và ưu tiên hóa`);
+      try {
+        setIsLoading(true);
+        // Clear messages cũ trước khi load
+        setMessages([]);
         
-        const topRequirements = prioritizedRequirements.slice(0, 3);
-        if (topRequirements.length > 0 && topRequirements.length <= 3) {
-          if (topRequirements.length === 1) {
-            // Nếu chỉ có 1 requirement, hiển thị trực tiếp
-            const req = topRequirements[0];
-            const title = req.title || req.summary || req.id || `Requirement`;
-            const priority = req.priority || req.priority_score || 'N/A';
-            parts.push(`\n🎯 Requirement: ${title} (Priority: ${priority})`);
-          } else {
-            // Nếu có nhiều hơn 1, hiển thị top list
-            parts.push(`\nTop ${topRequirements.length} requirements ưu tiên cao:`);
-            topRequirements.forEach((req: any, idx: number) => {
-              const title = req.title || req.summary || req.id || `Requirement ${idx + 1}`;
-              const priority = req.priority || req.priority_score || 'N/A';
-              parts.push(`  ${idx + 1}. ${title} (Priority: ${priority})`);
-            });
-          }
+        const apiMessages = await messageApi.getByConversationId(currentConversationId);
+        
+        // Convert API messages to UI messages
+        const uiMessages: Message[] = apiMessages.map((msg: APIMessage) => ({
+          id: msg.id.toString(),
+          role: msg.user_id ? 'user' : 'assistant', // Nếu có user_id thì là user message
+          content: msg.content,
+          time: new Date(msg.created_at).toLocaleTimeString(),
+        }));
+        
+        setMessages(uiMessages);
+      } catch (error) {
+        console.error('Failed to load messages:', error);
+        
+        // Nếu conversation chưa có messages, hiển thị welcome message
+        const errorMessage = error instanceof Error ? error.message : '';
+        const errorDetail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        
+        if (errorDetail === "No messages found for this conversation" || 
+            errorMessage.includes("No messages found")) {
+          setMessages([{ 
+            id: "welcome", 
+            role: "assistant", 
+            content: "👋 Start a new conversation! Send your first message below.", 
+            time: new Date().toLocaleTimeString() 
+          }]);
+        } else {
+          // Lỗi thật sự thì mới hiển thị error message
+          setMessages([{ 
+            id: "error", 
+            role: "assistant", 
+            content: "❌ Failed to load conversation messages.", 
+            time: new Date().toLocaleTimeString() 
+          }]);
         }
-      }
-
-      // Report preview
-      if (report.final_report_markdown) {
-        parts.push(`📄 Báo cáo đã được tạo. Xem chi tiết trong Preview Panel bên phải.`);
-      }
-
-      if (!parts.length) {
-        parts.push('✅ Pipeline đã chạy xong. Không có vấn đề nào được phát hiện.');
-      }
-
-      // Update preview data with full pipeline results
-      setPreviewData({
-        summary: {
-          added: 0,
-          modified: 0,
-          deleted: 0,
-          totalLines: { added: 0, deleted: 0 }
-        },
-        files: [],
-        issues: issues.map((it: any) => ({
-          type: (it.type === 'conflict' ? 'error' : it.severity === 'high' ? 'error' : it.severity === 'medium' ? 'warning' : 'info') as 'error' | 'warning' | 'info',
-          message: it.description || it.message || JSON.stringify(it),
-          file: it.file || it.story_id,
-          line: it.line,
-        })),
-        requirements: requirements,
-        prioritizedRequirements: prioritizedRequirements,
-        analysis: analysisRaw, // Pass full analysis structure to preview
-        report: report.final_report_markdown || '',
-        actionItems: report.action_items || [],
-        stakeholderQuestions: report.stakeholder_questions || [],
-        mermaid: report.final_report_mermaid || '',
-      });
-
-        const botMsg: Message = {
-          id: 'm' + Date.now(),
-          role: 'assistant',
-          content: parts.join('\n'),
-          time: new Date().toLocaleTimeString(),
-        };
-        setMessages((s) => [...s, botMsg]);
-      } catch (err: any) {
-        const errMsg: Message = {
-          id: 'err' + Date.now(),
-          role: 'assistant',
-          content: `❌ Lỗi khi gọi API phân tích: ${err?.message || String(err)}`,
-          time: new Date().toLocaleTimeString(),
-        };
-        setMessages((s) => [...s, errMsg]);
       } finally {
         setIsLoading(false);
       }
+    };
+
+    loadMessages();
+  }, [currentConversationId]);
+
+  // Auto scroll khi có messages mới
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // ------------------- Handle Send -------------------
+  const handleSend = async (text: string) => {
+    if (!text.trim()) return;
+
+    const id = "u-" + Date.now();
+    const userMsg: Message = { id, role: "user", content: text, time: new Date().toLocaleTimeString() };
+    setMessages((s) => [...s, userMsg]);
+    setIsLoading(true);
+    setIsAgentTyping(true);
+
+    console.log("🟢 Started typing indicator");
+
+    const isPipelineCommand =
+      text.toLowerCase().includes("story:") ||
+      text.toLowerCase().startsWith("/analyze") ||
+      text.toLowerCase().startsWith("/pipeline");
+
+    if (isPipelineCommand) {
+      try {
+        const resp = await runPipeline({ raw_text: text });
+        const payload = resp || {};
+
+        const analysisRaw = payload.analysis || {};
+        const analysis = analysisRaw.analysis || analysisRaw;
+        const report = payload.report || {};
+        const requirements = payload.requirements || [];
+        const prioritized = payload.prioritized || {};
+        const prioritizedRequirements = prioritized.requirements || requirements;
+        const issues =
+          Array.isArray(analysis.issues) || Array.isArray(analysisRaw.issues)
+            ? analysis.issues || analysisRaw.issues
+            : [];
+
+        const parts: string[] = [];
+
+        if (analysis.summary) {
+          const summary = analysis.summary;
+          if (summary.total_stories)
+            parts.push(`📊 Đã phân tích ${summary.total_stories} user story.`);
+          if (summary.stories_with_issues)
+            parts.push(`⚠️ ${summary.stories_with_issues} story có vấn đề.`);
+        }
+
+        if (issues.length > 0)
+          parts.push(`📋 Tổng cộng ${issues.length} vấn đề đã được phát hiện.`);
+
+        if (prioritizedRequirements.length > 0) {
+          const topRequirements = prioritizedRequirements.slice(0, 3);
+          parts.push(`📝 ${prioritizedRequirements.length} requirements đã được xác định.`);
+          topRequirements.forEach((req: any, idx: number) => {
+            parts.push(`  ${idx + 1}. ${req.title || req.summary} (Priority: ${req.priority || "N/A"})`);
+          });
+        }
+
+        if (report.final_report_markdown)
+          parts.push(`📄 Báo cáo chi tiết hiển thị trong Preview Panel.`);
+
+        setPreviewData({
+          issues,
+          requirements,
+          prioritizedRequirements,
+          analysis: analysisRaw,
+          report: report.final_report_markdown || "",
+          summary: { added: 0, modified: 0, deleted: 0, totalLines: { added: 0, deleted: 0 } },
+          files: [],
+        });
+
+        setMessages((s) => [
+          ...s,
+          {
+            id: "a-" + Date.now(),
+            role: "assistant",
+            content: parts.join("\n"),
+            time: new Date().toLocaleTimeString(),
+          },
+        ]);
+      } catch (err: any) {
+        setMessages((s) => [
+          ...s,
+          {
+            id: "err-" + Date.now(),
+            role: "assistant",
+            content: `❌ Lỗi khi gọi API phân tích: ${err.message || String(err)}`,
+            time: new Date().toLocaleTimeString(),
+          },
+        ]);
+      } finally {
+        setIsLoading(false);
+        setIsAgentTyping(false);
+      }
     } else {
-      // Route to WebSocket for chat with Gemini agent
       const sent = websocket.sendMessage(text);
       if (!sent) {
-        // If WebSocket not connected, show error
-        const errMsg: Message = {
-          id: 'err' + Date.now(),
-          role: 'assistant',
-          content: '❌ Không thể kết nối đến AI Agent. Vui lòng kiểm tra kết nối WebSocket.',
-          time: new Date().toLocaleTimeString(),
-        };
-        setMessages((s) => [...s, errMsg]);
+        setMessages((s) => [
+          ...s,
+          {
+            id: "err-" + Date.now(),
+            role: "assistant",
+            content: "❌ Không thể kết nối tới AI Agent.",
+            time: new Date().toLocaleTimeString(),
+          },
+        ]);
         setIsLoading(false);
+        setIsAgentTyping(false);
       }
-      // Loading will be set to false when WebSocket message is received (handled in onMessage callback)
     }
   };
 
@@ -268,57 +314,58 @@ export default function ChatLayout() {
   const user = getCurrentUserId();
 
   return (
-    <div className="flex h-full w-full bg-[#0f1419] text-white overflow-hidden">
-      <ChatSidebar onLogout={handleLogout} userEmail={userEmail}  />
+    <div className="flex h-full w-full bg-background text-white overflow-hidden">
+      <ChatSidebar onLogout={handleLogout} userEmail={userEmail} />
 
-      {/* Main Chat Area */}
-      <div className={`flex flex-col flex-1 h-full overflow-hidden transition-all duration-300 ${
-        showPreview ? (isPreviewExpanded ? 'w-[40%]' : 'w-[60%]') : 'w-full'
-      }`}>
-        {/* Header with Preview Toggle */}
+      {/* --- Main Chat --- */}
+      <div
+        className={`flex flex-col flex-1 h-full overflow-hidden transition-all duration-300 ${
+          showPreview ? (isPreviewExpanded ? "w-[60%]" : "w-[65%]") : "w-full"
+        }`}
+      >
+        {/* Header */}
         <div className="flex items-center border-b border-blue-900/20 bg-[#0a0e13] shadow-lg shrink-0">
           <div className="flex-1">
             <ChatHeader connected={websocket.connected} connecting={websocket.connecting} />
           </div>
-          
-          {/* Preview Toggle Button - Inside header, not overlapping */}
+
+          {/* Preview toggle */}
           <div className="px-4">
             <button
               onClick={() => setShowPreview(!showPreview)}
               className={`p-2.5 rounded-lg transition-all ${
                 showPreview
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
-                  : 'bg-blue-900/20 text-gray-400 hover:bg-blue-900/40 hover:text-gray-200'
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "bg-blue-900/20 text-gray-400 hover:bg-blue-900/40 hover:text-gray-200"
               }`}
-              title={showPreview ? 'Hide preview' : 'Show preview'}
+              title={showPreview ? "Hide preview" : "Show preview"}
             >
-              {showPreview ? (
-                <PanelRightClose className="w-5 h-5" />
-              ) : (
-                <PanelRightOpen className="w-5 h-5" />
-              )}
+              {showPreview ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
             </button>
           </div>
         </div>
-        
+
         <div className="flex-1 overflow-y-auto">
-          <ChatMessageList 
-            messages={messages} 
+          <ChatMessageList
+            messages={messages}
             isLoading={isLoading}
             isAgentTyping={isAgentTyping}
-            bottomRef={bottomRef} 
+            bottomRef={bottomRef}
           />
         </div>
+
         <div className="shrink-0">
           <ChatInput onSend={handleSend} disabled={false} />
         </div>
       </div>
 
-      {/* Preview Panel */}
+      {/* --- Preview Panel --- */}
       {showPreview && (
-        <div className={`h-full transition-all duration-300 ${
-          isPreviewExpanded ? 'w-[60%]' : 'w-[40%]'
-        }`}>
+        <div
+          className={`h-full transition-all duration-300 ${
+            isPreviewExpanded ? "w-[40%]" : "w-[35%]"
+          }`}
+        >
           <PreviewPanel
             data={previewData}
             onClose={() => setShowPreview(false)}

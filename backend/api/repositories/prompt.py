@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -15,14 +16,14 @@ class PromptRepository:
     # READ (One)
     async def get_prompt(self, db: AsyncSession, prompt_id: int) -> Optional[Prompt]:
         result = await db.execute(
-            select(Prompt).where(Prompt.id == prompt_id)
+            select(Prompt).where(Prompt.id == prompt_id, Prompt.status == 1)
         )
         return result.scalar_one_or_none()
 
     # READ (All)
     async def list_prompts(self, db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Prompt]:
         result = await db.execute(
-            select(Prompt).offset(skip).limit(limit)
+            select(Prompt).where(Prompt.status == 1).offset(skip).limit(limit)
         )
         return result.scalars().all()
 
@@ -33,7 +34,9 @@ class PromptRepository:
         await db.refresh(prompt)
         return prompt
 
-    # DELETE
+    # DELETE (Soft delete)
     async def delete_prompt(self, db: AsyncSession, prompt: Prompt) -> None:
-        await db.delete(prompt)
+        prompt.status = 0
+        prompt.last_updated = datetime.utcnow()
+        db.add(prompt)
         await db.commit()

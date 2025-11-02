@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -15,14 +16,14 @@ class AgentRepository:
     # READ (One)
     async def get_agent(self, db: AsyncSession, agent_id: int) -> Optional[Agent]:
         result = await db.execute(
-            select(Agent).where(Agent.id == agent_id)
+            select(Agent).where(Agent.id == agent_id, Agent.status == 1)
         )
         return result.scalar_one_or_none()
 
     # READ (All)
     async def list_agents(self, db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Agent]:
         result = await db.execute(
-            select(Agent).offset(skip).limit(limit)
+            select(Agent).where(Agent.status == 1).offset(skip).limit(limit)
         )
         return result.scalars().all()
 
@@ -33,7 +34,9 @@ class AgentRepository:
         await db.refresh(agent)
         return agent
 
-    # DELETE
+    # DELETE (Soft delete)
     async def delete_agent(self, db: AsyncSession, agent: Agent) -> None:
-        await db.delete(agent)
+        agent.status = 0
+        agent.last_updated = datetime.utcnow()
+        db.add(agent)
         await db.commit()
