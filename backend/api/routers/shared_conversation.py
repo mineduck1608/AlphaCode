@@ -7,7 +7,7 @@ from api.core import schemas
 
 router = APIRouter(
     prefix="/shared-conversations",
-    tags=["shared_conversation"],
+    tags=["shared-conversation"],
 )
 
 
