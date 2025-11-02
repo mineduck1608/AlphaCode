@@ -1,174 +1,109 @@
-from typing import Optional
-import datetime
+"""SQLAlchemy ORM models for database tables."""
 
-from sqlalchemy import ARRAY, Boolean, DateTime, Double, ForeignKeyConstraint, Integer, PrimaryKeyConstraint, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, ARRAY, Float
+from sqlalchemy.orm import relationship
+from datetime import datetime
 
-class Base(DeclarativeBase):
-    pass
+from .db import Base
 
 
 class Prompt(Base):
-    __tablename__ = 'prompt'
-    __table_args__ = (
-        PrimaryKeyConstraint('id', name='prompt_pkey'),
-    )
+    __tablename__ = "prompt"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    content: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-
-    agent: Mapped[list['Agent']] = relationship('Agent', back_populates='prompt')
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    last_updated = Column(DateTime, nullable=True)
 
 
 class Role(Base):
-    __tablename__ = 'role'
-    __table_args__ = (
-        PrimaryKeyConstraint('id', name='role_pkey'),
-    )
+    __tablename__ = "role"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-
-    user: Mapped[list['User']] = relationship('User', back_populates='role')
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    last_updated = Column(DateTime, nullable=True)
 
 
 class Agent(Base):
-    __tablename__ = 'agent'
-    __table_args__ = (
-        ForeignKeyConstraint(['prompt_id'], ['prompt.id'], name='fkagent352251'),
-        PrimaryKeyConstraint('id', name='agent_pkey')
-    )
+    __tablename__ = "agent"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    provider: Mapped[str] = mapped_column(String(255), nullable=False)
-    model: Mapped[str] = mapped_column(String(255), nullable=False)
-    avatar_url: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    prompt_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-
-    prompt: Mapped['Prompt'] = relationship('Prompt', back_populates='agent')
-    conversation_agent: Mapped[list['ConversationAgent']] = relationship('ConversationAgent', back_populates='agent')
-    message: Mapped[list['Message']] = relationship('Message', back_populates='agent')
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    provider = Column(String, nullable=False)
+    model = Column(String, nullable=False)
+    avatar_url = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    prompt_id = Column(Integer, ForeignKey("prompts.id"))
+    last_updated = Column(DateTime, nullable=True)
 
 
 class User(Base):
-    __tablename__ = 'user'
-    __table_args__ = (
-        ForeignKeyConstraint(['role_id'], ['role.id'], name='fkuser994439'),
-        PrimaryKeyConstraint('id', name='user_pkey')
-    )
+    __tablename__ = "user"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), nullable=False)
-    password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-
-    role: Mapped['Role'] = relationship('Role', back_populates='user')
-    conversation: Mapped[list['Conversation']] = relationship('Conversation', back_populates='user')
-    message: Mapped[list['Message']] = relationship('Message', back_populates='user')
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    role_id = Column(Integer, ForeignKey("roles.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    last_updated = Column(DateTime, nullable=True)
 
 
 class Conversation(Base):
-    __tablename__ = 'conversation'
-    __table_args__ = (
-        ForeignKeyConstraint(['user_id'], ['user.id'], name='fkconversati624844'),
-        PrimaryKeyConstraint('id', name='conversation_pkey')
-    )
+    __tablename__ = "conversation"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    is_shared: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    session: Mapped[str] = mapped_column(String(255), nullable=False)
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-    summary: Mapped[Optional[str]] = mapped_column(String(255))
-    summary_embedding: Mapped[Optional[list[float]]] = mapped_column(ARRAY(Double(precision=53)))
-
-    user: Mapped['User'] = relationship('User', back_populates='conversation')
-    conversation_agent: Mapped[list['ConversationAgent']] = relationship('ConversationAgent', back_populates='conversation')
-    shared_conversation: Mapped[list['SharedConversation']] = relationship('SharedConversation', back_populates='conversation')
-    message: Mapped[list['Message']] = relationship('Message', back_populates='conversation')
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    is_shared = Column(Boolean, default=False)
+    session = Column(String, nullable=True)
+    last_updated = Column(DateTime, nullable=True)
+    summary = Column(Text, nullable=True)
+    summary_embedding = Column(ARRAY(Float), nullable=True)
 
 
 class ConversationAgent(Base):
-    __tablename__ = 'conversation_agent'
-    __table_args__ = (
-        ForeignKeyConstraint(['agent_id'], ['agent.id'], name='fkconversati968934'),
-        ForeignKeyConstraint(['conversation_id'], ['conversation.id'], name='fkconversati48128'),
-        PrimaryKeyConstraint('id', name='conversation_agent_pkey')
-    )
+    __tablename__ = "conversation_agent"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    conversation_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    agent_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-
-    agent: Mapped['Agent'] = relationship('Agent', back_populates='conversation_agent')
-    conversation: Mapped['Conversation'] = relationship('Conversation', back_populates='conversation_agent')
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"))
+    agent_id = Column(Integer, ForeignKey("agents.id"))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    last_updated = Column(DateTime, nullable=True)
 
 
 class SharedConversation(Base):
-    __tablename__ = 'shared_conversation'
-    __table_args__ = (
-        ForeignKeyConstraint(['conversation_id'], ['conversation.id'], name='fkshared_con465607'),
-        PrimaryKeyConstraint('id', name='shared_conversation_pkey')
-    )
+    __tablename__ = "shared_conversation"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    conversation_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-    user_id: Mapped[Optional[int]] = mapped_column(Integer)
-    Column: Mapped[Optional[int]] = mapped_column(Integer)
-
-    conversation: Mapped['Conversation'] = relationship('Conversation', back_populates='shared_conversation')
-    message: Mapped[list['Message']] = relationship('Message', back_populates='shared_conversation')
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    last_updated = Column(DateTime, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 
 class Message(Base):
-    __tablename__ = 'message'
-    __table_args__ = (
-        ForeignKeyConstraint(['agent_id'], ['agent.id'], name='fkmessage131510'),
-        ForeignKeyConstraint(['conversation_id'], ['conversation.id'], name='fkmessage760887'),
-        ForeignKeyConstraint(['shared_conversation_id'], ['shared_conversation.id'], name='fkmessage722037'),
-        ForeignKeyConstraint(['user_id'], ['user.id'], name='fkmessage395623'),
-        PrimaryKeyConstraint('id', name='message_pkey')
-    )
+    __tablename__ = "message"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    role: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[int] = mapped_column(Integer, nullable=False)
-    content: Mapped[str] = mapped_column(String(255), nullable=False)
-    content_type: Mapped[int] = mapped_column(Integer, nullable=False)
-    message_type: Mapped[int] = mapped_column(Integer, nullable=False)
-    shared_conversation_id: Mapped[Optional[int]] = mapped_column(Integer)
-    conversation_id: Mapped[Optional[int]] = mapped_column(Integer)
-    user_id: Mapped[Optional[int]] = mapped_column(Integer, comment='user id hoặc agent id')
-    agent_id: Mapped[Optional[int]] = mapped_column(Integer, comment='user id hoặc agent id')
-    reaction: Mapped[Optional[str]] = mapped_column(String(255))
-    last_updated: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-
-    agent: Mapped[Optional['Agent']] = relationship('Agent', back_populates='message')
-    conversation: Mapped[Optional['Conversation']] = relationship('Conversation', back_populates='message')
-    shared_conversation: Mapped[Optional['SharedConversation']] = relationship('SharedConversation', back_populates='message')
-    user: Mapped[Optional['User']] = relationship('User', back_populates='message')
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(Integer, default=1)
+    content = Column(Text, nullable=False)
+    content_type = Column(Integer, nullable=False)
+    message_type = Column(Integer, nullable=False)
+    shared_conversation_id = Column(Integer, ForeignKey("shared_conversations.id"), nullable=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=True)
+    reaction = Column(String, nullable=True)
+    last_updated = Column(DateTime, nullable=True)
