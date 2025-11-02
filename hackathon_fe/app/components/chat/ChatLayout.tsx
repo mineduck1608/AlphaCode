@@ -8,7 +8,7 @@ import ChatInput from "./ChatInput";
 import PreviewPanel from "./PreviewPanel";
 import { analyzeStories, runPipeline } from '@/app/api/mcpApi';
 import { useWebSocket } from "@/app/lib/hooks/useWebSocket";
-import { getCurrentUser, mockLogout } from "@/app/lib/authMock";
+import { getCurrentUserId, logout, getCurrentUserEmail } from "@/app/lib/authMock";
 import { getWebSocketUrl, STORAGE_KEYS, UI_CONFIG } from "@/app/lib/constants";
 import { PanelRightOpen, PanelRightClose } from "lucide-react";
 
@@ -36,6 +36,7 @@ export default function ChatLayout() {
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
   const [previewData, setPreviewData] = useState<any>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const userEmail = getCurrentUserEmail();
 
   // WebSocket connection to backend
   const websocket = useWebSocket({
@@ -237,16 +238,16 @@ export default function ChatLayout() {
   };
 
   const handleLogout = () => {
-    mockLogout();
+    logout();
     location.href = "/login";
   };
 
-  const user = getCurrentUser();
+  const user = getCurrentUserId();
 
   return (
     <div className="flex h-full w-full bg-[#0f1419] text-white overflow-hidden">
-      <ChatSidebar onLogout={handleLogout} userEmail={user?.email} />
-      
+      <ChatSidebar onLogout={handleLogout} userEmail={userEmail}  />
+
       {/* Main Chat Area */}
       <div className={`flex flex-col flex-1 h-full overflow-hidden transition-all duration-300 ${
         showPreview ? (isPreviewExpanded ? 'w-[40%]' : 'w-[60%]') : 'w-full'

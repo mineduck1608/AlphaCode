@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 import { SidebarProvider } from '../app/context/SidebarContext';
-import LayoutWrapper from '@/app/components/common/LayoutWrapper';
+import { Toaster } from 'sonner';
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -27,8 +27,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={outfit.className}>
         <SidebarProvider>
-          <LayoutWrapper>{children}</LayoutWrapper>
+          {children}
         </SidebarProvider>
+        <Toaster position="top-right" richColors />
       </body>
     </html>
   );
