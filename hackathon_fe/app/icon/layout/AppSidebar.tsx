@@ -4,11 +4,11 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useSidebar } from "../context/SidebarContext";
+import { useSidebar } from "../../context/SidebarContext";
 import { BoxIconLine } from "@/app/icon/index";
 import { cn } from "@/app/lib/utils";
 import { Plus, MessageSquare, Settings, LogOut } from "lucide-react";
-import { getCurrentUserId, logout } from "../lib/authMock";
+import { getCurrentUserId, logout } from "../../lib/authMock";
 import { conversationApi } from "@/app/api/conversationApi";
 import { Conversation } from "@/app/types/conversation";
 

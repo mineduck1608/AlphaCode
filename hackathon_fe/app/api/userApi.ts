@@ -3,7 +3,7 @@ import { User } from '@/app/types/user';
 
 export const userApi = {
   // POST /users/login - Login or create user (parameters as query params)
-  login: async (email: string, password: string, role_id: number = 2): Promise<User> => {
+  login: async (email: string, password: string, role_id: number = 1): Promise<User> => {
     const response = await axiosInstance.post<User>("/users/login", null, {
       params: {
         email,

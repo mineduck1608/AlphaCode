@@ -62,7 +62,7 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(get_session)) -> 
 async def login_or_create_user(
     email: str,
     password: str,
-    role_id: int = 2,  # default: user
+    role_id: int = 1,  # default: user
     db: AsyncSession = Depends(get_session)
 ) -> schemas.User:
     """
