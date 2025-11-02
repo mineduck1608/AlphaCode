@@ -18,6 +18,11 @@ const navItems: NavItem[] = [
     name: "Welcome",
     path: "/",
   },
+  {
+    icon: <BoxIconLine className="w-5 h-5" />,
+    name: "Homepage",
+    path: "/chat",
+  },
 ];
 
 const AppSidebar: React.FC = () => {
