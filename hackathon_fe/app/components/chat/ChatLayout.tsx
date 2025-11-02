@@ -10,6 +10,8 @@ import { useWebSocket } from "@/app/lib/hooks/useWebSocket";
 import { getCurrentUserId, logout } from "@/app/lib/authMock";
 import { getWebSocketUrl, STORAGE_KEYS, UI_CONFIG } from "@/app/lib/constants";
 import { PanelRightOpen, PanelRightClose } from "lucide-react";
+import { messageApi } from "@/app/api/messageApi";
+import type { Message as APIMessage } from "@/app/types/message";
 
 export type Message = {
   id: string;
@@ -21,6 +23,7 @@ export type Message = {
 const STORAGE_KEY = STORAGE_KEYS.CHAT_HISTORY;
 
 export default function ChatLayout() {
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -45,7 +48,7 @@ export default function ChatLayout() {
       if (wsMessage.type === 'system') {
         // System messages (welcome, etc.)
         const botMsg: Message = {
-          id: 'ws' + Date.now(),
+          id: `ws-system-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           role: 'assistant',
           content: `[System] ${wsMessage.content}`,
           time: new Date().toLocaleTimeString(),
@@ -54,7 +57,7 @@ export default function ChatLayout() {
       } else if (wsMessage.type === 'text') {
         // Regular text response from agent
         const botMsg: Message = {
-          id: 'ws' + Date.now(),
+          id: `ws-text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           role: 'assistant',
           content: wsMessage.content,
           time: new Date().toLocaleTimeString(),
@@ -71,6 +74,41 @@ export default function ChatLayout() {
     },
   });
 
+  // Load messages khi conversation ID thay đổi
+  useEffect(() => {
+    const loadMessages = async () => {
+      if (!currentConversationId) return;
+      
+      try {
+        setIsLoading(true);
+        const apiMessages = await messageApi.getByConversationId(currentConversationId);
+        
+        // Convert API messages to UI messages
+        // Giả sử: role = 1 là user, role khác là assistant
+        const uiMessages: Message[] = apiMessages.map((msg: APIMessage) => ({
+          id: msg.id.toString(),
+          role: msg.user_id ? 'user' : 'assistant', // Nếu có user_id thì là user message
+          content: msg.content,
+          time: new Date(msg.created_at).toLocaleTimeString(),
+        }));
+        
+        setMessages(uiMessages);
+      } catch (error) {
+        console.error('Failed to load messages:', error);
+        setMessages([{ 
+          id: "error", 
+          role: "assistant", 
+          content: "❌ Failed to load conversation messages.", 
+          time: new Date().toLocaleTimeString() 
+        }]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadMessages();
+  }, [currentConversationId]);
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     // auto scroll
@@ -81,8 +119,8 @@ export default function ChatLayout() {
   const handleSend = async (text: string) => {
     if (!text.trim()) return;
     
-    // Add user message to UI
-    const id = Date.now().toString();
+    // Add user message to UI with unique ID
+    const id = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const userMsg: Message = { 
       id, 
       role: "user", 
@@ -131,7 +169,7 @@ export default function ChatLayout() {
         // Nếu gửi thất bại, fallback về mock
         setIsLoading(false);
         const errorMsg: Message = {
-          id: 'err' + Date.now(),
+          id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           role: 'assistant',
           content: '❌ Failed to send message. WebSocket not connected.',
           time: new Date().toLocaleTimeString(),
@@ -143,7 +181,7 @@ export default function ChatLayout() {
       // Fallback: không có WebSocket connection
       setIsLoading(false);
       const offlineMsg: Message = {
-        id: 'off' + Date.now(),
+        id: `off-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         role: 'assistant',
         content: '⚠️ WebSocket disconnected. Please check backend server at ws://localhost:8000/ws/chat',
         time: new Date().toLocaleTimeString(),
@@ -158,6 +196,11 @@ export default function ChatLayout() {
   };
 
   const user = getCurrentUserId();
+
+  // Function để set conversation hiện tại
+  const handleSelectConversation = (conversationId: string) => {
+    setCurrentConversationId(conversationId);
+  };
 
   return (
     <div className="flex h-full w-full bg-[#0f1419] text-white overflow-hidden">
