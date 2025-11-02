@@ -6,12 +6,17 @@ import { Plus, MessageSquare, Settings, LogOut, User, Share2, Clock, Globe } fro
 import ShareDialog from "./ShareDialog";
 import SharedConversationsList from "./SharedConversationsList";
 import { getAllConversations, type ShareableConversation } from "@/app/lib/shareMockAPI";
+import { conversationApi } from "@/app/api";
+import { getCurrentUser } from "@/app/lib/authMock";
+import { useRouter } from "next/navigation";
 
 export default function ChatSidebar({ onLogout, userEmail }: { onLogout?: () => void; userEmail?: string | undefined }) {
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const router = useRouter();
   const [selectedConversation, setSelectedConversation] = useState<ShareableConversation | null>(null);
   const [activeTab, setActiveTab] = useState<"recent" | "shared">("recent");
-
+  const { create } = conversationApi;
+  const user = getCurrentUser();
   const handleShareClick = async () => {
     // Get first conversation for demo (trong thực tế sẽ get conversation hiện tại)
     const conversations = await getAllConversations();
@@ -20,21 +25,42 @@ export default function ChatSidebar({ onLogout, userEmail }: { onLogout?: () => 
       setShowShareDialog(true);
     }
   };
+
+  const handleNewChat = async () => {
+    try {
+      const conv = await create({
+        is_shared: false,
+        name: "New Conversation",
+        user_id: user?.id
+      })
+      console.log("Created new conversation:", conv);
+      if(conv.id){
+        router.push(`/chat/${conv.id}`);
+      }
+    }
+    catch (err) {
+    }
+  }
+
   return (
     <div className="w-72 bg-background flex flex-col border-r border-blue-900/20">
       {/* Header với gradient và logo */}
       <div className="p-4 border-b border-blue-900/20 bg-linear-to-r from-blue-600/10 to-purple-600/10">
         <div className="flex items-center gap-2 mb-3">
-          <Image 
-            src="/logo2.png" 
-            alt="AlphaCode Logo" 
-            width={28} 
+          <Image
+            src="/logo2.png"
+            alt="AlphaCode Logo"
+            width={28}
             height={28}
             className="w-7 h-7 object-contain"
           />
           <span className="font-bold text-lg text-white">AlphaCode</span>
         </div>
-        <button className="w-full flex items-center justify-center gap-2 text-sm font-medium text-white bg-linear-to-r from-blue-600 to-blue-500 px-4 py-3 rounded-lg hover:from-blue-500 hover:to-blue-400 transition-all shadow-lg shadow-blue-500/20">
+        <button
+          onClick={() => {
+            handleNewChat();
+          }}
+          className="w-full flex items-center justify-center gap-2 text-sm font-medium text-white bg-linear-to-r from-blue-600 to-blue-500 px-4 py-3 rounded-lg hover:from-blue-500 hover:to-blue-400 transition-all shadow-lg shadow-blue-500/20">
           <Plus size={18} /> New Chat
         </button>
       </div>
@@ -43,11 +69,10 @@ export default function ChatSidebar({ onLogout, userEmail }: { onLogout?: () => 
       <div className="flex border-b border-blue-900/20 bg-[#0a0e13]">
         <button
           onClick={() => setActiveTab("recent")}
-          className={`flex-1 px-4 py-3 text-xs font-medium transition-all relative flex items-center justify-center gap-2 ${
-            activeTab === "recent"
+          className={`flex-1 px-4 py-3 text-xs font-medium transition-all relative flex items-center justify-center gap-2 ${activeTab === "recent"
               ? "text-blue-400"
               : "text-gray-400 hover:text-gray-300"
-          }`}
+            }`}
         >
           <Clock size={14} />
           Recent
@@ -57,11 +82,10 @@ export default function ChatSidebar({ onLogout, userEmail }: { onLogout?: () => 
         </button>
         <button
           onClick={() => setActiveTab("shared")}
-          className={`flex-1 px-4 py-3 text-xs font-medium transition-all relative flex items-center justify-center gap-2 ${
-            activeTab === "shared"
+          className={`flex-1 px-4 py-3 text-xs font-medium transition-all relative flex items-center justify-center gap-2 ${activeTab === "shared"
               ? "text-blue-400"
               : "text-gray-400 hover:text-gray-300"
-          }`}
+            }`}
         >
           <Globe size={14} />
           Shared
@@ -114,23 +138,23 @@ export default function ChatSidebar({ onLogout, userEmail }: { onLogout?: () => 
           </div>
         </div>
         <div className="flex gap-2 mb-2">
-          <button 
-            className="flex-1 flex items-center justify-center gap-2 text-xs text-blue-400 hover:text-white hover:bg-blue-900/20 px-3 py-2 rounded-lg transition-all border border-blue-900/20 hover:border-blue-500/30" 
+          <button
+            className="flex-1 flex items-center justify-center gap-2 text-xs text-blue-400 hover:text-white hover:bg-blue-900/20 px-3 py-2 rounded-lg transition-all border border-blue-900/20 hover:border-blue-500/30"
             onClick={handleShareClick}
           >
             <Share2 size={14} />
             <span>Share Chat</span>
           </button>
-          <button 
-            className="flex items-center justify-center gap-2 text-xs text-gray-400 hover:text-white hover:bg-blue-900/20 px-3 py-2 rounded-lg transition-all border border-blue-900/20 hover:border-blue-500/30" 
+          <button
+            className="flex items-center justify-center gap-2 text-xs text-gray-400 hover:text-white hover:bg-blue-900/20 px-3 py-2 rounded-lg transition-all border border-blue-900/20 hover:border-blue-500/30"
             onClick={() => alert("Settings (mock)")}
           >
             <Settings size={14} />
           </button>
         </div>
         <div className="flex gap-2">
-          <button 
-            className="flex-1 flex items-center justify-center gap-2 text-xs text-red-400 hover:text-white hover:bg-red-900/20 px-3 py-2 rounded-lg transition-all border border-red-900/20 hover:border-red-500/30" 
+          <button
+            className="flex-1 flex items-center justify-center gap-2 text-xs text-red-400 hover:text-white hover:bg-red-900/20 px-3 py-2 rounded-lg transition-all border border-red-900/20 hover:border-red-500/30"
             onClick={onLogout}
           >
             <LogOut size={14} />
@@ -140,7 +164,7 @@ export default function ChatSidebar({ onLogout, userEmail }: { onLogout?: () => 
       </div>
 
       {/* Share Dialog */}
-      <ShareDialog 
+      <ShareDialog
         conversation={selectedConversation}
         isOpen={showShareDialog}
         onClose={() => setShowShareDialog(false)}
