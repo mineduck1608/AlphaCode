@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 
-from ..services.prompt import PromptService
+from api.services.prompt import PromptService
 from api.core.db import get_session
 from api.core.models import Prompt # Giả sử Prompt là một model/schema cho response
 
