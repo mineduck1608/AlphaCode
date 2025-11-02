@@ -79,21 +79,47 @@ Acceptance Criteria:
     resp = send_receive(collector, {"id": 3, "method": "extract_stories", "params": {"chunks": resp["response"]["chunks"]}})
     print("extract_stories_resp:", resp)
 
-    # Step 2: Analyze stories
+    # Step 3: Extract requirements
     stories = resp["response"]["stories"]  # from collector's extract_stories
-    resp = send_receive(analyzer, {"id": 4, "method": "analyze_stories", "params": {"stories": stories}})
-    print("analyzer_resp:", resp)
+    analyzer_resp = send_receive(analyzer, {"id": 4, "method": "analyze_stories", "params": {"stories": stories}})
+    print("analyzer_resp:", analyzer_resp)
 
-    # Step 3: Extract requirements - pass the stories directly since analyzer just validates
+    # Merge analyzer results into stories
+    analyzed_stories = analyzer_resp["response"]["stories"]
+    story_analysis = {s["id"]: s["analysis"] for s in analyzed_stories}
+
+    # Step 3: Extract requirements - pass stories directly since analyzer just validates
     resp = send_receive(requirement, {"id": 5, "method": "identify_requirements", "params": {"stories": stories}})
     print("requirement_identify_resp:", resp)
 
+    # Add analysis to requirements
     reqs = resp["response"]["requirements"]
+    for req in reqs:
+        # Find matching story and copy its analysis
+        story_id = req["id"].replace("R", "S")  # Convert R1 -> S1
+        if story_id in story_analysis:
+            req["analysis"] = story_analysis[story_id]
+
+    # Prioritize requirements
     resp = send_receive(requirement, {"id": 6, "method": "prioritize", "params": {"requirements": reqs}})
     print("requirement_prioritize_resp:", resp)
+    
+    # Get prioritized requirements with analysis
+    final_reqs = resp["response"]["requirements"]
+    for req in final_reqs:
+        story_id = req["id"].replace("R", "S")
+        if story_id in story_analysis:
+            req["analysis"] = story_analysis[story_id]
 
-    # Step 4: Generate report
-    resp = send_receive(reporter, {"id": 7, "method": "generate_report", "params": {"requirements": resp["response"]["requirements"]}})
+    # Step 4: Generate report with full analysis
+    resp = send_receive(reporter, {
+        "id": 7,
+        "method": "build_final_report",  # Use build_final_report for richer output
+        "params": {
+            "core_requirements": final_reqs,
+            "analyzer_output": analyzer_resp["response"]["analysis"]
+        }
+    })
     print("reporter_resp:", resp)
 
     # Clean up
