@@ -1,6 +1,6 @@
 "use client";
   
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
@@ -9,6 +9,8 @@ import { BoxIconLine } from "@/app/icon/index";
 import { cn } from "@/app/lib/utils";
 import { Plus, MessageSquare, Settings, LogOut } from "lucide-react";
 import { getCurrentUser, mockLogout } from "@/app/lib/authMock";
+import { conversationApi } from "@/app/api/conversationApi";
+import { Conversation } from "@/app/types/conversation";
 
 type NavItem = {
   name: string;
@@ -34,13 +36,43 @@ const AppSidebar: React.FC = () => {
   const pathname = usePathname();
   const router = useRouter();
   const user = getCurrentUser();
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(false);
 
   const isActive = (path: string) => path === pathname;
   const isChatPage = pathname.startsWith('/chat');
 
+  // Fetch conversations when component mounts or when user changes
+  useEffect(() => {
+    const fetchConversations = async () => {
+      if (!user) return;
+      
+      setLoadingConversations(true);
+      try {
+        const data = await conversationApi.getAll();
+        // Sort by last_updated descending to show most recent first
+        const sortedData = data.sort((a, b) => 
+          new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime()
+        );
+        setConversations(sortedData.slice(0, 10)); // Show only 10 most recent
+      } catch (error) {
+        console.error('Failed to fetch conversations:', error);
+        setConversations([]);
+      } finally {
+        setLoadingConversations(false);
+      }
+    };
+
+    fetchConversations();
+  }, [user]);
+
   const handleLogout = () => {
     mockLogout();
     router.push('/login');
+  };
+
+  const handleConversationClick = (conversationId: string) => {
+    router.push(`/chat?id=${conversationId}`);
   };
 
   return (
@@ -134,18 +166,31 @@ const AppSidebar: React.FC = () => {
             </div>
             <div className="space-y-1">
               <div className="px-3 py-2 text-xs text-muted-foreground font-medium">Recent Chats</div>
-              <button className="w-full px-3 py-2 rounded-lg hover:bg-accent text-left text-sm text-muted-foreground hover:text-accent-foreground transition-colors flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 flex-shrink-0" />
-                <span className="truncate">Project ideas</span>
-              </button>
-              <button className="w-full px-3 py-2 rounded-lg hover:bg-accent text-left text-sm text-muted-foreground hover:text-accent-foreground transition-colors flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 flex-shrink-0" />
-                <span className="truncate">Study notes</span>
-              </button>
-              <button className="w-full px-3 py-2 rounded-lg hover:bg-accent text-left text-sm text-muted-foreground hover:text-accent-foreground transition-colors flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 flex-shrink-0" />
-                <span className="truncate">Recipes</span>
-              </button>
+              
+              {loadingConversations ? (
+                <div className="px-3 py-2 text-xs text-muted-foreground">Loading...</div>
+              ) : conversations.length > 0 ? (
+                conversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    onClick={() => handleConversationClick(conversation.id)}
+                    className={cn(
+                      "w-full px-3 py-2 rounded-lg hover:bg-accent text-left text-sm transition-colors flex items-center gap-2",
+                      pathname.includes(conversation.id)
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground hover:text-accent-foreground"
+                    )}
+                    title={conversation.name || conversation.summary || `Conversation ${conversation.id.slice(0, 8)}`}
+                  >
+                    <MessageSquare className="w-4 h-4 flex-shrink-0" />
+                    <span className="truncate">
+                      {conversation.name || conversation.summary || `Chat ${conversation.id.slice(0, 8)}`}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-xs text-muted-foreground">No conversations yet</div>
+              )}
             </div>
           </>
         )}
