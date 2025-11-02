@@ -14,7 +14,11 @@ type AuthFormData = {
 export default function AuthPage() {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [error, setError] = useState<string | null>(null);
-  const { register, handleSubmit, formState: { isSubmitting } } = useForm<AuthFormData>();
+  const {
+    register,
+    handleSubmit,
+    formState: { isSubmitting },
+  } = useForm<AuthFormData>();
   const router = useRouter();
 
   // Nếu đã login -> chuyển sang /chat
@@ -27,16 +31,22 @@ export default function AuthPage() {
     setError(null);
     try {
       if (mode === "signup") {
+        // --- SIGN UP ---
         await userApi.create({
           email: data.email,
           password: data.password,
-          role_id: "2",
+          role_id: "2", // role mặc định cho user
         });
         alert("Tạo tài khoản thành công! Hãy đăng nhập.");
         setMode("login");
       } else {
-       const user = await userApi.login(data.email, data.password, 2);
-        localStorage.setItem("userId", String(user.id));
+        // --- LOGIN ---
+        const user = await userApi.login(data.email, data.password);
+
+        // ✅ Lưu user_id vào localStorage
+        localStorage.setItem("user_id", String(user.id));
+
+        // ✅ Chuyển đến trang chat
         router.replace("/chat");
       }
     } catch (err: any) {
@@ -58,8 +68,6 @@ export default function AuthPage() {
         </p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 mt-6">
-
-
           <div>
             <label className="block text-sm text-neutral-300 mb-1">Email</label>
             <input
