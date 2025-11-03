@@ -10,7 +10,7 @@ import { analyzeStories, runPipeline } from '@/app/api/mcpApi';
 import { useWebSocket } from "@/app/lib/hooks/useWebSocket";
 import { getCurrentUserId, logout, getCurrentUserEmail } from "@/app/lib/authMock";
 import { getWebSocketUrl, UI_CONFIG } from "@/app/lib/constants";
-import { PanelRightOpen, PanelRightClose } from "lucide-react";
+import { PanelRightOpen, PanelRightClose, MessageSquare, Plus } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { messageApi } from "@/app/api/messageApi";
 import type { Message as APIMessage } from "@/app/types/message";
@@ -66,6 +66,13 @@ export default function ChatLayout() {
 
       // --- System message ---
       if (wsMessage.type === "system") {
+        // Bỏ qua welcome message và các system messages không cần thiết
+        const contentStr = String(wsMessage.content || "");
+        if (contentStr.includes("Welcome!") || contentStr.includes("session ID")) {
+          return;
+        }
+        
+        // Chỉ hiển thị system messages quan trọng (nếu cần)
         const botMsg: Message = {
           id: "ws-" + Date.now(),
           role: "assistant",
@@ -103,6 +110,20 @@ export default function ChatLayout() {
         };
         setMessages((prev) => [...prev, botMsg]);
         setIsLoading(false);
+
+        // Lưu message từ agent vào database
+        if (currentConversationId) {
+          messageApi.createAgentMessage({
+            conversation_id: currentConversationId,
+            agent_id: "1", // TODO: Get actual agent_id from WebSocket or context
+            content: contentStr,
+            role: 1 // assistant role
+          }).then(() => {
+            console.log("✅ Agent message saved to database");
+          }).catch((error) => {
+            console.error("❌ Failed to save agent message:", error);
+          });
+        }
         return;
       }
 
@@ -202,6 +223,18 @@ export default function ChatLayout() {
   const handleSend = async (text: string) => {
     if (!text.trim()) return;
 
+    // Kiểm tra phải có conversation
+    if (!currentConversationId) {
+      alert("Please select or create a conversation first!");
+      return;
+    }
+
+    const userId = getCurrentUserId();
+    if (!userId) {
+      alert("Please login first!");
+      return;
+    }
+
     const id = "u-" + Date.now();
     const userMsg: Message = { id, role: "user", content: text, time: new Date().toLocaleTimeString() };
     setMessages((s) => [...s, userMsg]);
@@ -209,6 +242,18 @@ export default function ChatLayout() {
     setIsAgentTyping(true);
 
     console.log("🟢 Started typing indicator");
+
+    // Lưu message vào database với đúng user_id và conversation_id
+    messageApi.createUserMessage({
+      conversation_id: currentConversationId,
+      user_id: userId.toString(),
+      content: text,
+      role: 0 // user role
+    }).then(() => {
+      console.log("✅ User message saved to database");
+    }).catch((error) => {
+      console.error("❌ Failed to save user message:", error);
+    });
 
     const isPipelineCommand =
       text.toLowerCase().includes("story:") ||
@@ -346,12 +391,40 @@ export default function ChatLayout() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          <ChatMessageList
-            messages={messages}
-            isLoading={isLoading}
-            isAgentTyping={isAgentTyping}
-            bottomRef={bottomRef}
-          />
+          {!currentConversationId ? (
+            <div className="flex flex-col items-center justify-center h-full text-center px-8">
+              <div className="max-w-2xl">
+                <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-blue-600/20 flex items-center justify-center">
+                  <MessageSquare className="w-12 h-12 text-blue-400" />
+                </div>
+                <h2 className="text-3xl font-bold mb-4 bg-linear-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  Welcome to AlphaCode Chat
+                </h2>
+                <p className="text-gray-400 text-lg mb-8">
+                  Select a conversation from the sidebar or create a new one to start chatting with AI
+                </p>
+                <div className="flex gap-4 justify-center">
+                  <button
+                    onClick={() => {
+                      const newChatBtn = document.querySelector('[data-new-chat]') as HTMLButtonElement;
+                      newChatBtn?.click();
+                    }}
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
+                  >
+                    <Plus className="w-5 h-5" />
+                    New Conversation
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <ChatMessageList
+              messages={messages}
+              isLoading={isLoading}
+              isAgentTyping={isAgentTyping}
+              bottomRef={bottomRef}
+            />
+          )}
         </div>
 
         <div className="shrink-0">

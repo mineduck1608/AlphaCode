@@ -73,28 +73,17 @@ class ChatAgent(BaseAgent):
         self.conversation_id: Optional[int] = None
         self.conversation_service = ConversationService()
         
-        # State
-        self.conversation_history = []
-        self.collected_requirements: List[str] = []
-        self.pipeline_state = "idle"  # idle | collecting | analyzing
-        
-        # Pipeline results cache for summary generation
-        self.last_pipeline_result = {
-            "stories": [],
-            "analysis": {},
-            "requirements": [],
-            "validation_issues": [],
-            "diagram": "",
-            "report": {}
-        }
+        # State - NO memory cache, all from DB
+        self.is_first_message = True  # Track first user message for auto-naming
 
     async def initialize_conversation(self, conversation_name: Optional[str] = None):
         """Initialize conversation in database and load existing context."""
         async with async_session() as db:
             if not self.conversation_id:
+                # Create conversation with temporary name (will be updated after first message)
                 conversation = await self.conversation_service.create_conversation(
                     db=db,
-                    name=conversation_name or f"Requirements {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    name=conversation_name or f"New Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                     user_id=self.user_id,
                     is_shared=False
                 )
@@ -108,27 +97,44 @@ class ChatAgent(BaseAgent):
                 )
             else:
                 # Load existing conversation context
+                self.is_first_message = False  # Existing conversation, not first message
                 await self._load_conversation_context(db)
 
     async def handle_message(self, message: str) -> str:
-        """Handle incoming message."""
+        """Handle incoming message - Load context from DB, process, save back to DB."""
         if not self.conversation_id:
             await self.initialize_conversation()
         
-        # Save user message
-        self.conversation_history.append({"role": "user", "content": message})
+        # 1. Save user message
         await self._save_message(role=1, content=message, user_id=self.user_id)
         
-        # Generate response
-        response = await self._generate_response(message)
+        # 2. Auto-generate conversation name from first message
+        if self.is_first_message:
+            await self._auto_name_conversation(message)
+            self.is_first_message = False
         
-        # Save response
-        self.conversation_history.append({"role": "assistant", "content": response})
+        # 3. Load conversation summary and recent messages from DB
+        conversation_summary = await self._load_conversation_summary()
+        recent_messages = await self._load_recent_messages(limit=10)
+        
+        # 4. Generate response with loaded context (summary + recent messages)
+        response = await self._generate_response(message, conversation_summary, recent_messages)
+        
+        # 5. Save response
         await self._save_message(role=2, content=response, agent_id=self.agent_id)
+        
+        # 6. Update conversation summary periodically (every 5 messages)
+        await self._update_conversation_summary_if_needed()
         
         return response
 
-    async def _save_message(self, role: int, content: str, user_id: Optional[int] = None, agent_id: Optional[int] = None):
+    async def _save_message(
+        self, 
+        role: int, 
+        content: str, 
+        user_id: Optional[int] = None, 
+        agent_id: Optional[int] = None
+    ):
         """Save message to database."""
         async with async_session() as db:
             message = Message(
@@ -145,18 +151,133 @@ class ChatAgent(BaseAgent):
             db.add(message)
             await db.commit()
     
+    async def _auto_name_conversation(self, first_message: str):
+        """Auto-generate conversation name from first user message using Gemini."""
+        try:
+            if not genai or not GENAI_API_KEY:
+                return
+            
+            # Use Gemini to generate a short, descriptive name (max 50 chars)
+            prompt = f"""Tạo tên ngắn gọn (tối đa 50 ký tự) cho cuộc hội thoại dựa trên tin nhắn đầu tiên của người dùng.
+Chỉ trả về tên, không giải thích.
+
+Tin nhắn: {first_message}
+
+Ví dụ:
+- "Phân tích use case đăng nhập" → "Use Case Đăng Nhập"
+- "Requirements cho hệ thống quản lý thư viện" → "Hệ Thống Thư Viện"
+- "Tôi muốn làm app bán hàng" → "App Bán Hàng"
+
+Tên cuộc hội thoại:"""
+
+            model = genai.GenerativeModel(MODEL)
+            response = await asyncio.to_thread(
+                model.generate_content,
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "max_output_tokens": 50,
+                }
+            )
+            
+            if response and response.text:
+                conversation_name = response.text.strip()
+                # Remove quotes if present
+                conversation_name = conversation_name.strip('"').strip("'")
+                # Truncate to 50 chars if needed
+                if len(conversation_name) > 50:
+                    conversation_name = conversation_name[:47] + "..."
+                
+                # Update conversation name in DB
+                async with async_session() as db:
+                    await self.conversation_service.update_conversation(
+                        db=db,
+                        conversation_id=self.conversation_id,
+                        name=conversation_name
+                    )
+        except Exception as e:
+            print(f"Error auto-naming conversation: {e}")
+            # Silently fail, keep default name
+    
     async def _load_conversation_context(self, db):
-        """Load existing conversation context from DB."""
+        """Load existing conversation summary from DB (called on reconnect)."""
         conversation = await self.conversation_service.get_conversation_by_id(db, self.conversation_id)
         if conversation and conversation.summary:
-            # Parse summary to restore pipeline results if available
-            try:
-                # Summary format: "Analysis: {json}"
-                if "Requirements:" in conversation.summary:
-                    # Context exists, could be parsed but for now just note it exists
-                    pass
-            except Exception:
-                pass
+            # Summary exists, will be used in context when generating responses
+            return conversation.summary
+        return None
+    
+    async def _load_conversation_summary(self) -> Optional[str]:
+        """Load conversation summary for context."""
+        async with async_session() as db:
+            conversation = await self.conversation_service.get_conversation_by_id(db, self.conversation_id)
+            if conversation and conversation.summary:
+                return conversation.summary
+            return None
+    
+    async def _load_recent_messages(self, limit: int = 10) -> List[dict]:
+        """Load recent messages from DB for context."""
+        async with async_session() as db:
+            from sqlalchemy import select
+            
+            stmt = select(Message).where(
+                Message.conversation_id == self.conversation_id,
+                Message.status == 1
+            ).order_by(Message.created_at.desc()).limit(limit)
+            
+            result = await db.execute(stmt)
+            messages = result.scalars().all()
+            
+            # Reverse to get chronological order
+            messages = list(reversed(messages))
+            
+            # Format for context
+            context = []
+            for msg in messages:
+                role_name = "user" if msg.role == 1 else "assistant" if msg.role == 2 else "system"
+                context.append({
+                    "role": role_name,
+                    "content": msg.content,
+                    "timestamp": msg.created_at.isoformat() if msg.created_at else None
+                })
+            
+            return context
+    
+    async def _update_conversation_summary_if_needed(self):
+        """Update conversation summary periodically (every 5 messages)."""
+        async with async_session() as db:
+            from sqlalchemy import select, func
+            
+            # Count messages in conversation
+            stmt = select(func.count(Message.id)).where(
+                Message.conversation_id == self.conversation_id,
+                Message.status == 1
+            )
+            result = await db.execute(stmt)
+            count = result.scalar()
+            
+            # Update summary every 5 messages
+            if count % 5 == 0:
+                # Load all messages
+                all_messages = await self._load_recent_messages(limit=100)
+                
+                # Generate summary text
+                summary_text = f"""# Conversation Summary
+Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Total Messages: {count}
+
+## Recent Exchanges:
+"""
+                for msg in all_messages[-10:]:  # Last 10 messages
+                    role = msg['role'].upper()
+                    content = msg['content'][:200]  # Truncate long messages
+                    summary_text += f"\n**{role}**: {content}...\n"
+                
+                # Generate embedding
+                embedding = await self._generate_embedding(summary_text)
+                
+                # Save to conversation
+                await self._save_conversation_summary(summary_text, embedding)
     
     async def _save_conversation_summary(self, summary: str, embedding: Optional[List[float]] = None):
         """Save conversation summary and embedding to DB."""
@@ -205,8 +326,13 @@ class ChatAgent(BaseAgent):
             print(f"Error searching conversations: {e}")
             return []
 
-    async def _generate_response(self, message: str) -> str:
-        """Generate response using Gemini as orchestrator."""
+    async def _generate_response(
+        self, 
+        message: str, 
+        summary: Optional[str], 
+        recent_messages: List[dict]
+    ) -> str:
+        """Generate response using Gemini with loaded context from DB."""
         text = message.strip()
         text_lower = text.lower()
         
@@ -216,7 +342,7 @@ class ChatAgent(BaseAgent):
         
         # Use Gemini to understand intent and route to appropriate action
         if genai and GENAI_API_KEY:
-            return await self._call_gemini_orchestrator(text)
+            return await self._call_gemini_orchestrator(text, summary, recent_messages)
         
         return "Xin lỗi, tôi đang gặp vấn đề kết nối với AI. Vui lòng thử lại."
 
@@ -348,6 +474,49 @@ class ChatAgent(BaseAgent):
             mermaid_diagram = report.get("final_report_mermaid", "")
             markdown_report = report.get("final_report_markdown", "")
             
+            # Cache pipeline results for future reference
+            self.last_pipeline_result = {
+                "stories": stories,
+                "analysis": analysis,
+                "requirements": requirements,
+                "validation_issues": [],
+                "diagram": mermaid_diagram,
+                "report": report
+            }
+            
+            # Create conversation summary for DB storage
+            summary_text = f"""# Requirements Analysis Summary
+
+## Project: project_{self.conversation_id}
+## Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+### Input Requirements ({reqs_count})
+{raw_text[:500]}...
+
+### Extracted Stories ({stories_count})
+{json.dumps(stories[:3] if len(stories) > 3 else stories, indent=2, ensure_ascii=False)}
+
+### Core Requirements ({len(requirements)})
+{json.dumps(requirements, indent=2, ensure_ascii=False)}
+
+### Analysis Results
+{json.dumps(analysis, indent=2, ensure_ascii=False)}
+
+### Context Diagram
+```mermaid
+{mermaid_diagram}
+```
+
+### Executive Summary
+{markdown_report}
+"""
+            
+            # Generate embedding from summary
+            embedding = await self._generate_embedding(summary_text)
+            
+            # Save summary and embedding to conversation table
+            await self._save_conversation_summary(summary_text, embedding)
+            
             # Format result
             result = f"""✅ Pipeline phân tích hoàn tất!
 
@@ -394,7 +563,12 @@ class ChatAgent(BaseAgent):
             error_detail = traceback.format_exc()
             return f"❌ Lỗi pipeline: {str(e)}\n\nChi tiết:\n{error_detail[:500]}"
 
-    async def _call_gemini_orchestrator(self, message: str) -> str:
+    async def _call_gemini_orchestrator(
+        self, 
+        message: str, 
+        summary: Optional[str],
+        recent_messages: List[dict]
+    ) -> str:
         """Call Gemini as orchestrator with function calling for MCP routing."""
         try:
             # Define function declarations matching MCP servers capabilities
@@ -583,8 +757,9 @@ class ChatAgent(BaseAgent):
 ❌ KHÔNG hỗ trợ: Coding, Database Design, Technical Implementation, Testing, Project Management, General Chat
 
 📊 Context hiện tại:
-- Đã lưu: {len(self.collected_requirements)} requirements
-- Trạng thái: {self.pipeline_state}
+- Conversation ID: {self.conversation_id}
+- Messages loaded: {len(recent_messages)}
+- Has summary: {bool(summary)}
 
 🎯 Workflow tự động khi nhận Business Requirements/Use Cases:
 1. ingest_raw_requirements → Thu thập và chuẩn hóa requirements
@@ -646,9 +821,23 @@ class ChatAgent(BaseAgent):
                 }
             )
             
-            # Build conversation history
+            # Build conversation history from loaded context (from DB)
+            # Include summary as first context if available
             history = []
-            for msg in self.conversation_history[-8:]:
+            
+            if summary:
+                # Add summary as system context
+                history.append({
+                    "role": "user",
+                    "parts": [f"[Previous conversation summary]\n{summary[:1000]}..."]
+                })
+                history.append({
+                    "role": "model",
+                    "parts": ["I have the context from our previous conversation."]
+                })
+            
+            # Add recent messages for immediate context
+            for msg in recent_messages[-8:]:  # Last 8 messages
                 role = "user" if msg["role"] == "user" else "model"
                 history.append({"role": role, "parts": [msg["content"]]})
             

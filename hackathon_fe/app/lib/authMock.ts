@@ -19,6 +19,7 @@ export function getCurrentUserId(): number | null {
 export function logout() {
   if (typeof window === "undefined") return;
   localStorage.removeItem("user_id");
+  localStorage.removeItem("user_email");
 }
 
 export function getCurrentUserEmail(): string | null {
